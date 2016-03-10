@@ -3,7 +3,8 @@ using System.Collections.Generic;
 
 namespace PolyReduction
 {
-    public class PolyReducer
+    [ExecuteInEditMode]
+    public class PolyReducer : MonoBehaviour
     {
         //inner class to hold initial mesh data
         private class ModelData
@@ -40,30 +41,115 @@ namespace PolyReduction
 
         private ModelData m_data;
 
+        private Mesh m_mesh;
+
+        //Set a value of a maximum vertex count to render
+        public int m_renderedVerticesCount;
+        private int m_prevRenderedVerticesCount;
+
+        public void Start()
+        {
+            Debug.Log("PrepareModel");
+            PrepareModel();
+        }
+
         /**
-         * Init the model and perform collapse operation on it
-         * **/
-        public void InitModel()
+        * Prepare the data from the model attached to this component
+        * Once this step is done, we can cut down the vertices on this model and create low-polygons models
+        **/
+        public void PrepareModel()
         {
             List<int> permutation;
-            m_data = GetDummyData();
+            m_data = GetMeshData();
+            WriteModelDataToFile(100.0f);
+            //m_data = GetDummyData();
             ProgressiveMesh(m_data.Verts, m_data.Tris, out m_collapseMap, out permutation);
-
             PermuteVertices(permutation);
-            //model_position = Vector(0, 0, -3);
-            //Quaternion yaw(Vector(0, 1, 0), -3.14f / 4);    // 45 degrees
-            //Quaternion pitch(Vector(1, 0, 0), 3.14f / 12);  // 15 degrees 
-            //model_orientation = pitch * yaw;
+
+            m_renderedVerticesCount = m_data.Verts.Count;
+            m_prevRenderedVerticesCount = m_renderedVerticesCount;
+
+            Debug.Log("model setup with %i:" + m_renderedVerticesCount + " vertices");
+        }
+
+        /**
+        * Return the data contained inside the mesh as one single object
+        **/
+        private ModelData GetMeshData()
+        {
+            m_mesh = GetComponent<MeshFilter>().sharedMesh;
+
+            if (m_mesh == null)
+                throw new System.Exception("A mesh has to be added to this object MeshFilter component in order to perform a polygon reduction on it");
+
+            List<Vector3> verts = new List<Vector3>(m_mesh.vertices);
+            List<int> tris = new List<int>(m_mesh.triangles);
+
+            return new ModelData(verts, tris);
+        }
+
+        /**
+        * Render this model using exactly m_maxVertices
+        **/
+        public void RenderModel()
+        {
+            List<Vector3> cutVertices;
+            List<int> cutTriangles;
+            CutMeshPolygons(out cutVertices, out cutTriangles, m_renderedVerticesCount);
+            RefreshModel(cutVertices, cutTriangles);
+        }
+
+        /**
+        * Return a list of vertices and indices where player has specified a maximum count of vertices for the initial model
+        **/
+        public void CutMeshPolygons(out List<Vector3> cutVertices, out List<int> cutTriangles, int maxVertices)
+        {
+            //no work to do here
+            if (maxVertices >= m_data.Verts.Count)
+            {
+                cutVertices = m_data.Verts;
+                cutTriangles = m_data.Tris;
+                return;
+            }
+
+            cutVertices = m_data.Verts.GetRange(0, maxVertices);
+            cutTriangles = new List<int>();
+
+            for (int i = 0; i != m_data.Tris.Count; i += 3)
+            {
+                int p0 = Map(m_data.Tris[i], maxVertices);
+                int p1 = Map(m_data.Tris[i + 1], maxVertices);
+                int p2 = Map(m_data.Tris[i + 2], maxVertices);
+
+                //one-dimensional (flat) triangle
+                if (p0 == p1 || p1 == p2 || p2 == p0)
+                    continue;
+
+                cutTriangles.Add(p0);
+                cutTriangles.Add(p1);
+                cutTriangles.Add(p2);
+            }
+        }
+
+        /**
+        * Map the index of one vertex according to a number of maximum rendered vertices using the relevant collapse map
+        **/
+        private int Map(int a, int mx)
+        {
+            if (mx <= 0) return 0;
+            while (a >= mx)
+            {
+                a = m_collapseMap[a];
+            }
+            return a;
         }
 
         /**
          * Core function of the algorithm
          * **/
-        public void ProgressiveMesh(List<Vector3> verts, List<int> tris, out List<int> map, out List<int> permutation)
+        private void ProgressiveMesh(List<Vector3> verts, List<int> tris, out List<int> map, out List<int> permutation)
         {
             PrepareMeshData(verts, tris);
-
-            float cost = ComputeEdgeCollapseCost(m_vertices[0], m_vertices[1]);
 
             ComputeAllEdgeCollapseCosts();
 
@@ -89,12 +175,10 @@ namespace PolyReduction
             {
                 map[i] = (map[i] == -1) ? 0 : permutation[map[i]];
             }
-            // The caller of this function should reorder their vertices
-            // according to the returned "permutation".
         }
 
         /**
-         * Transform the inital mesh data (verts and tris) to one which is more appropriate to our algorithm (with more info in it
+         * Transform the inital mesh data (verts and tris) to one which is more appropriate to our algorithm (with more info in it)
          * **/
         private void PrepareMeshData(List<Vector3> verts, List<int> tris)
         {
@@ -129,20 +213,16 @@ namespace PolyReduction
             }
         }
 
-        void PermuteVertices(List<int> permutation)
+        /**
+        * Reorder the vertices and triangles according to the permutation array
+        **/
+        private void PermuteVertices(List<int> permutation)
         {
             if (permutation.Count != m_data.Verts.Count)
                 throw new System.Exception("permutation list and initial vertices are not of the same size");
 
             // rearrange the vertex Array 
             List<Vector3> tmpArray = new List<Vector3>(m_data.Verts);
-            //List<Vector3> tmpArray = new List<Vector3>(permutation.Count);
-
-            //for (int i = 0; i < m_data.Verts.Count; i++)
-            //{
-            //    tmpArray.Add(m_data.Verts[i]);
-            //}
-
 
             for (int i = 0; i < m_data.Verts.Count; i++)
             {
@@ -161,7 +241,7 @@ namespace PolyReduction
         /**
       * Compute the cost to collapse a specific edge defined by vertices u and v
       * **/
-        public float ComputeEdgeCollapseCost(Vertex u, Vertex v)
+        private float ComputeEdgeCollapseCost(Vertex u, Vertex v)
         {
             // if we collapse edge uv by moving u to v then how 
             // much different will the model change, i.e. how much "error".
@@ -209,7 +289,7 @@ namespace PolyReduction
         /**
        * Compute the cost to collapse a specific edge to one of its neighbors (the one with the least cost is chosen)
        * **/
-        public void ComputeEdgeCostAtVertex(Vertex v)
+        private void ComputeEdgeCostAtVertex(Vertex v)
         {
             // compute the edge collapse cost for all edges that start
             // from vertex v.  Since we are only interested in reducing
@@ -242,7 +322,7 @@ namespace PolyReduction
         /**
        * Compute the cost to collapse an edge for every edge in the mesh
        * **/
-        public void ComputeAllEdgeCollapseCosts()
+        private void ComputeAllEdgeCollapseCosts()
         {
             // For all the edges, compute the difference it would make
             // to the model if it was collapsed.  The least of these
@@ -256,7 +336,7 @@ namespace PolyReduction
         /**
         * Collapse the vertex u onto the vertex v
         * **/
-        public void Collapse(Vertex u, Vertex v)
+        private void Collapse(Vertex u, Vertex v)
         {
             // Collapse the edge uv by moving vertex u onto v
             // Actually remove tris on uv, then update tris that
@@ -305,7 +385,7 @@ namespace PolyReduction
         /**
         * Return the vertex with the 'least cost' to collapse
         * **/
-        public Vertex MinimumCostEdge()
+        private Vertex MinimumCostEdge()
         {
             // Find the edge that when collapsed will affect model the least.
             // This funtion actually returns a Vertex, the second vertex
@@ -329,31 +409,116 @@ namespace PolyReduction
          * **/
         private ModelData GetDummyData()
         {
-            List<Vector3> verts = new List<Vector3>(4);
-            verts.Add(new Vector3(0, 0, 0));
-            verts.Add(new Vector3(10, 0, 0));
-            verts.Add(new Vector3(0, 5, 0));
-            verts.Add(new Vector3(3, 8, 5));
+            //float[,] dummyVertices = RabbitData.rabbit_vertices;
+            //int[,] dummyTriangles = RabbitData.rabbit_triangles;
+            float[,] dummyVertices = PlaneData.plane_vertices;
+            int[,] dummyTriangles = PlaneData.plane_triangles;
 
-            List<int> tris = new List<int>(12);
-            tris.Add(0);
-            tris.Add(2);
-            tris.Add(1);
+            List<Vector3> verts = new List<Vector3>(dummyVertices.GetLength(0));
+            for (int i = 0; i != dummyVertices.GetLength(0); i++)
+            {
+                float x = dummyVertices[i, 0];
+                float y = dummyVertices[i, 1];
+                float z = dummyVertices[i, 2];
 
-            tris.Add(0);
-            tris.Add(1);
-            tris.Add(3);
+                verts.Add(new Vector3(x, y, z));
+            }
 
-            tris.Add(1);
-            tris.Add(2);
-            tris.Add(3);
+            List<int> tris = new List<int>(dummyTriangles.Length);
+            for (int i = 0; i != dummyTriangles.GetLength(0); i++)
+            {
+                tris.Add(dummyTriangles[i, 0]);
+                tris.Add(dummyTriangles[i, 1]);
+                tris.Add(dummyTriangles[i, 2]);
+            }
 
-            tris.Add(2);
-            tris.Add(0);
-            tris.Add(3);
+            m_mesh = new Mesh();
+            GetComponent<MeshFilter>().sharedMesh = m_mesh;
+            m_mesh.vertices = verts.ToArray();
+            m_mesh.triangles = tris.ToArray();
 
             ModelData dummyData = new ModelData(verts, tris);
             return dummyData;
+        }
+
+        /**
+        * Reassign vertices and triangles to the model
+        **/
+        private void RefreshModel(List<Vector3> vertices, List<int> triangles)
+        {
+            m_mesh.Clear();
+            m_mesh.vertices = vertices.ToArray();
+            m_mesh.triangles = triangles.ToArray();
+        }
+
+
+        public void Update()
+        {
+            if (m_data != null)
+            {
+                if (m_renderedVerticesCount != m_prevRenderedVerticesCount)
+                {
+                    if (m_renderedVerticesCount < 0)
+                        m_renderedVerticesCount = 0;
+                    if (m_renderedVerticesCount > m_data.Verts.Count)
+                        m_renderedVerticesCount = m_data.Verts.Count;
+
+                    RenderModel();
+
+                    m_prevRenderedVerticesCount = m_renderedVerticesCount;
+                }
+            }
+        }
+
+        private void WriteModelDataToFile(float scale)
+        {
+            string strData = "";
+
+            //c# file immutable code
+            strData += "using UnityEngine;\n\n";
+            strData += "namespace PolyReduction\n";
+            strData += "{\n";
+            strData += "\tpublic class PlaneData\n";
+            strData += "\t{\n";
+
+            //vertices
+            strData += "\t\tpublic static float[,] plane_vertices =\n";
+            strData += "\t\t{\n";
+            for (int i = 0; i != m_data.Verts.Count; i++)
+            {
+                Vector3 vertex = m_data.Verts[i];
+                string strVertex = "\t\t\t{" + (vertex.x * scale) + "f," + (vertex.y * scale) + "f," + (vertex.z * scale) + "f}";
+                strData += strVertex;
+                if (i < m_data.Verts.Count - 1)
+                    strData += ",";
+                strData += "\n";
+            }
+
+            strData += "\t\t};\n\n";
+
+            //triangles
+            strData += "\t\tpublic static int[,] plane_triangles =\n";
+            strData += "\t\t{\n";
+            for (int i = 0; i != m_data.Tris.Count; i += 3)
+            {
+                string strTri = "\t\t\t{" + m_data.Tris[i] + "," + m_data.Tris[i + 1] + "," + m_data.Tris[i + 2] + "}";
+                strData += strTri;
+                if (i < m_data.Tris.Count - 1)
+                    strData += ",";
+                strData += "\n";
+            }
+
+
+            strData += "\t\t};\n";
+
+            //end of c# file
+            strData += "\t}\n}";
+
+            // Write the string to a file.
+            System.IO.StreamWriter file = new System.IO.StreamWriter("F:\\Unity\\workspace\\PolyReduction\\Assets\\PlaneData.cs");
+            file.WriteLine(strData);
+
+            file.Close();
         }
     }
 }
