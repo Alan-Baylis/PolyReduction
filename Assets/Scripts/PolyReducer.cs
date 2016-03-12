@@ -60,9 +60,9 @@ namespace PolyReduction
         public void PrepareModel()
         {
             List<int> permutation;
-            m_data = GetMeshData();
-            WriteModelDataToFile(100.0f);
-            //m_data = GetDummyData();
+            //m_data = GetMeshData();
+            //WriteModelDataToFile(1.0f);
+            m_data = GetDummyData();
             ProgressiveMesh(m_data.Verts, m_data.Tris, out m_collapseMap, out permutation);
             PermuteVertices(permutation);
 
@@ -515,7 +515,8 @@ namespace PolyReduction
             strData += "\t}\n}";
 
             // Write the string to a file.
-            System.IO.StreamWriter file = new System.IO.StreamWriter("F:\\Unity\\workspace\\PolyReduction\\Assets\\PlaneData.cs");
+            string pathToScriptsFolder = "C:\\Unity_workspace\\PolyReduction\\Assets\\Scripts";
+            System.IO.StreamWriter file = new System.IO.StreamWriter(pathToScriptsFolder + "\\PlaneData.cs");
             file.WriteLine(strData);
 
             file.Close();
