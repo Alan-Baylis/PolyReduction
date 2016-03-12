@@ -9,7 +9,7 @@ namespace PolyReduction
     public class Cluster
     {
         private Vector3 m_position;
-        private List<int> m_indices; //indices of vertices that share the same 3D position
+        private List<Vertex> m_clusteredVertices; //vertices that share the same 3D position
 
         private List<Cluster> m_sharedNeighbors; //adjacent vertices to every vertex in this cluster
         public List<Cluster> SharedNeighbors
@@ -27,6 +27,12 @@ namespace PolyReduction
             {
                 return m_sharedAdjacentTriangles;
             }
+        }
+
+        public void Init(List<Vertex> vertices)
+        {
+            m_clusteredVertices = vertices;
+
         }
     }
 }
