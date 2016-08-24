@@ -3,11 +3,11 @@ using System.Collections.Generic;
 
 namespace PolyReduction
 {
-    public class Vertex
+    public class Wedge
     {
-        public Vector3 m_position { get; set; } // location of this point
+        public Vector3 m_position { get; set; } // location of this wedge
 
-        private int m_iID; // place of vertex in original list
+        private int m_iID; // place of wedge in original list
         public int ID
         {
             get
@@ -16,9 +16,17 @@ namespace PolyReduction
             }
         }
 
+        private List<Vertex> m_vertices;
+        public List<Vertex> Vertices
+        {
+            get
+            {
+                return m_vertices;
+            }
+        }
 
-        private List<Vertex> m_neighbors; // adjacent vertices
-        public List<Vertex> Neighbors
+        private List<Wedge> m_neighbors; // adjacent wedges
+        public List<Wedge> Neighbors
         {
             get
             {
@@ -36,9 +44,7 @@ namespace PolyReduction
         }
 
         public float m_cost { get; set; } // cached cost of collapsing edge
-        public Vertex m_collapse { get; set; } // candidate vertex for collapse
-
-        public Wedge m_parentWedge { get; set; }
+        public Wedge m_collapse { get; set; } // candidate wedge for collapse
 
         public override bool Equals(object obj)
         {
@@ -55,20 +61,54 @@ namespace PolyReduction
 
         public override int GetHashCode() { return Mathf.RoundToInt(m_position.x) ^ Mathf.RoundToInt(m_position.y) ^ Mathf.RoundToInt(m_position.z); }
 
-        public Vertex(Vector3 v, int _id)
+        public Wedge(Vector3 v, int id)
         {
             m_position = v;
-            m_iID = _id;
+            m_iID = id;
 
-            m_neighbors = new List<Vertex>(3);
+            m_vertices = new List<Vertex>();
+            m_neighbors = new List<Wedge>(3);
             m_adjacentTriangles = new List<Triangle>(3);
+        }
+
+        public void AddVertex(Vertex vertex)
+        {
+            m_vertices.Add(vertex);
+
+            //set this wedge as parent wedge
+            vertex.m_parentWedge = this;
+
+            //add all triangles to wedge
+            for (int i = 0; i != vertex.AdjacentTriangles.Count; i++)
+            {
+                AddAdjacentTriangle(vertex.AdjacentTriangles[i]);
+            }
+        }
+
+        public void RemoveVertex(Vertex vertex)
+        {
+            m_vertices.Add(vertex);
+            if (HasVertex(vertex))
+                m_vertices.Remove(vertex);
+        }
+
+        public bool HasVertex(Vertex vertex)
+        {
+            for (int i = 0; i != m_vertices.Count; i++)
+            {
+                if (vertex == m_vertices[i])
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         public void AddAdjacentTriangle(Triangle triangle)
         {
-            m_adjacentTriangles.Add(triangle);
-
-            m_parentWedge.AddAdjacentTriangle(triangle);
+            if (!HasAdjacentTriangle(triangle))
+                m_adjacentTriangles.Add(triangle);
         }
 
         public void RemoveAdjacentTriangle(Triangle triangle)
@@ -88,19 +128,19 @@ namespace PolyReduction
             return false;
         }
 
-        public void AddNeighbor(Vertex neighbor)
+        public void AddNeighbor(Wedge neighbor)
         {
             if (!HasNeighbor(neighbor))
                 m_neighbors.Add(neighbor);
         }
 
-        public void RemoveNeighbor(Vertex neighbor)
+        public void RemoveNeighbor(Wedge neighbor)
         {
             if (HasNeighbor(neighbor))
-                m_neighbors.Remove(neighbor);            
+                m_neighbors.Remove(neighbor);
         }
 
-        public bool HasNeighbor(Vertex neighbor)
+        public bool HasNeighbor(Wedge neighbor)
         {
             for (int i = 0; i != m_neighbors.Count; i++)
             {
@@ -111,48 +151,18 @@ namespace PolyReduction
             return false;
         }
 
-        public void RemoveIfNonNeighbor(Vertex v)
+        public void RemoveIfNonNeighbor(Wedge w)
         {
-            // removes v from neighbor list if v isn't a neighbor.
-            if (!HasNeighbor(v)) 
+            // removes v from neighbor list if w isn't a neighbor.
+            if (!HasNeighbor(w))
                 return;
 
-            for (int i = 0; i < m_adjacentTriangles.Count; i++)
+            for (int i = 0; i != m_vertices.Count; i++)
             {
-                if (m_adjacentTriangles[i].HasVertex(v)) 
-                    return;
+                m_vertices[i].RemoveIfNonNeighbor(m_vertices[i]);
             }
 
-            RemoveNeighbor(v);
-        }
-
-        /**
-        * Do this vertex and another one have an edge in common (i.e share at least one adjacent triangle)
-        */ 
-        private bool ShareEdge(Vertex vertex)
-        {
-            for (int i = 0; i < m_adjacentTriangles.Count; i++)
-            {
-                if (m_adjacentTriangles[i].HasVertex(vertex))
-                    return true;
-            }
-
-            return false;
-        }
-
-        /**
-        * Tell if this vertex can collapse on one of the vertices of the parameter 'wedge'
-        * Return the Vertex on which this vertex can collapse on
-        **/
-        public Vertex CanCollapseOnWedge(Wedge wedge)
-        {
-            for (int i = 0; i != wedge.Vertices.Count; i++)
-            {
-                if (wedge.Vertices[i].ShareEdge(this))
-                    return wedge.Vertices[i];
-            }
-
-            return null;
+            RemoveNeighbor(w);
         }
 
         public void Delete()
@@ -161,7 +171,7 @@ namespace PolyReduction
                 throw new System.Exception("Vertex still references one or more adjacent triangles");
 
             //for each neighbor of this vertex remove it from the neighbors list
-            for (int i = 0; i != m_neighbors.Count;i++)
+            for (int i = 0; i != m_neighbors.Count; i++)
             {
                 m_neighbors[i].m_neighbors.Remove(this);
             }

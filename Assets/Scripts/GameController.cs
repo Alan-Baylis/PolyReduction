@@ -20,14 +20,14 @@ public class GameController : MonoBehaviour
         Debug.Log("Start");
 
         GameObject rabbitObject = (GameObject)Instantiate(m_rabbitPfb);
-        MeshFilter meshFilter = rabbitObject.GetComponent<MeshFilter>();
+        //MeshFilter meshFilter = rabbitObject.GetComponent<MeshFilter>();
 
         PolyReducer polyReducer = rabbitObject.GetComponent<PolyReducer>();
         polyReducer.PrepareModel();
 
-        List<Vector3> cutVertices;
-        List<int> cutTriangles;
-        polyReducer.CutMeshPolygons(out cutVertices, out cutTriangles, 453);
+        //List<Vector3> cutVertices;
+        //List<int> cutTriangles;
+        //polyReducer.CutMeshPolygons(out cutVertices, out cutTriangles, 453);
     }
 
     /**
