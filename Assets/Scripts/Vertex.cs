@@ -111,9 +111,11 @@ namespace PolyReduction
             return false;
         }
 
+        /**
+         * Removes v from neighbor list if v isn't a neighbor.
+         * **/
         public void RemoveIfNonNeighbor(Vertex v)
         {
-            // removes v from neighbor list if v isn't a neighbor.
             if (!HasNeighbor(v)) 
                 return;
 

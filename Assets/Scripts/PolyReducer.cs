@@ -698,7 +698,8 @@ namespace PolyReduction
             strData += "\t}\n}";
 
             // Write the string to a file.
-            System.IO.StreamWriter file = new System.IO.StreamWriter("F:\\Unity\\workspace\\PolyReduction\\Assets\\PlaneData.cs");
+            string pathToScriptsFolder = "C:\\Unity_workspace\\PolyReduction\\Assets\\Scripts";
+            System.IO.StreamWriter file = new System.IO.StreamWriter(pathToScriptsFolder + "\\PlaneData.cs");
             file.WriteLine(strData);
 
             file.Close();
