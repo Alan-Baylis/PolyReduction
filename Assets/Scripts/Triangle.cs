@@ -16,6 +16,17 @@ namespace PolyReduction
 
             ComputeNormal();
         }
+
+        //public Triangle(Triangle other)
+        //{
+        //    m_vertices = new Vertex[3];
+        //    m_vertices[0] = new Vertex(other.m_vertices[0]);
+        //    m_vertices[1] = new Vertex(other.m_vertices[1]);
+        //    m_vertices[2] = new Vertex(other.m_vertices[2]);
+
+        //    m_normal = other.m_normal;
+        //}
+
         public void ComputeNormal()
         {
             Vector3 v0 = m_vertices[0].m_position;
@@ -42,26 +53,29 @@ namespace PolyReduction
                     m_vertices[i] = vNew;
             }
 
-            vOld.RemoveAdjacentTriangle(this);
             vNew.AddAdjacentTriangle(this);
-            for (int i = 0; i < 3; i++)
-            {
-                vOld.RemoveIfNonNeighbor(m_vertices[i]);
-                m_vertices[i].RemoveIfNonNeighbor(vOld);
-            }
-            for (int i = 0; i < 3; i++)
-            {
-                if (m_vertices[i].HasAdjacentTriangle(this))
-                {
-                    for (int j = 0; j < 3; j++)
-                    {
-                        if (i != j)
-                            m_vertices[i].AddNeighbor(m_vertices[j]);
-                    }
-                }
-            }
-
             ComputeNormal();
+
+            //vOld.RemoveAdjacentTriangle(this);
+            //vNew.AddAdjacentTriangle(this);
+            //for (int i = 0; i < 3; i++)
+            //{
+            //    vOld.RemoveIfNonNeighbor(m_vertices[i]);
+            //    m_vertices[i].RemoveIfNonNeighbor(vOld);
+            //}
+            //for (int i = 0; i < 3; i++)
+            //{
+            //    if (m_vertices[i].HasAdjacentTriangle(this))
+            //    {
+            //        for (int j = 0; j < 3; j++)
+            //        {
+            //            if (i != j)
+            //                m_vertices[i].AddNeighbor(m_vertices[j]);
+            //        }
+            //    }
+            //}
+
+            //ComputeNormal();
         }
 
         public bool HasVertex(Vertex v)
@@ -74,18 +88,20 @@ namespace PolyReduction
             for (int i = 0; i < 3; i++)
             {
                 if (m_vertices[i] != null)
-                    m_vertices[i].AdjacentTriangles.Remove(this);
+                    m_vertices[i].RemoveAdjacentTriangle(this);
             }
 
-            for (int i = 0; i < 3; i++)
-            {
-                int i2 = (i + 1) % 3;
-                if (m_vertices[i] == null || m_vertices[i2] == null)
-                    continue;
+            //for (int i = 0; i < 3; i++)
+            //{
+            //    int i2 = (i + 1) % 3;
+            //    if (m_vertices[i] == null || m_vertices[i2] == null)
+            //        continue;
 
-                m_vertices[i].RemoveIfNonNeighbor(m_vertices[i2]);
-                m_vertices[i2].RemoveIfNonNeighbor(m_vertices[i]);
-            }
+            //    //m_vertices[i].RemoveIfNonNeighbor(m_vertices[i2]);
+            //    //m_vertices[i2].RemoveIfNonNeighbor(m_vertices[i]);
+            //    m_vertices[i].RemoveNeighbor(m_vertices[i2]);
+            //    m_vertices[i2].RemoveNeighbor(m_vertices[i]);
+            //}
         }
     }
 }

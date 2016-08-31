@@ -8,7 +8,7 @@ public class GameController : MonoBehaviour
 
     public void Start()
     {
-        //TestAlgorithmOnFileData();
+        TestAlgorithmOnFileData();
     }
 
     /**
@@ -17,8 +17,6 @@ public class GameController : MonoBehaviour
     private void TestAlgorithmOnFileData()
     {
         //Test the algorithm on the rabbit data
-        Debug.Log("Start");
-
         GameObject rabbitObject = (GameObject)Instantiate(m_rabbitPfb);
         //MeshFilter meshFilter = rabbitObject.GetComponent<MeshFilter>();
 
