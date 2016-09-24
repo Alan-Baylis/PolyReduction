@@ -8,7 +8,7 @@ public class GameController : MonoBehaviour
 
     public void Start()
     {
-        TestAlgorithmOnFileData();
+        //TestAlgorithmOnFileData();
     }
 
     /**
@@ -42,5 +42,5 @@ public class GameController : MonoBehaviour
     private void TestAlgorithmOn3DComplexExportedModel()
     {
 
-    }
+    }   
 }

@@ -49,33 +49,13 @@ namespace PolyReduction
         }
 
         public float m_cost { get; set; } // cached cost of collapsing edge
-        public Wedge m_collapse { get; set; } // candidate wedge for collapse
+        public Wedge m_collapse { get; set; } // candidate wedge for collapse        
 
-        public struct CollapsedVertex
-        {
-            public int m_initialIndex;
-            public int m_collapsedIndex;
-            public Vector3 m_position;
-
-            public override string ToString()
-            {
-                return "vertex " + m_initialIndex + " collapsed on vertex " + m_collapsedIndex + " at position " + m_position;
-            }
-        }
-
-        public List<CollapsedVertex> m_mappedVertices;
-
-        //public override bool Equals(object obj)
-        //{
-        //    if (!(obj is Wedge))
-        //        return false;
-
-        //    Wedge other = (Wedge)obj;
-
-        //    return m_iID == other.m_iID;
-        //}
-
-        //public override int GetHashCode() { return Mathf.RoundToInt(m_position.x) ^ Mathf.RoundToInt(m_position.y) ^ Mathf.RoundToInt(m_position.z); }
+        //public List<CollapsedVertex> m_collapsedVertices; //mapping between vertices that collapse
+        public Dictionary<int, int> m_collapsedVertices; //mapping between vertices that collapse
+        public List<DisplacedVertex> m_displacedVertices; //store here vertices that have been displaced after this wedge collapsed
+        public List<int> m_deletedVertices; //store here vertices that no longer exist after this wedge collapsed
+        
 
         public Wedge(Vector3 v, int id)
         {
@@ -85,31 +65,11 @@ namespace PolyReduction
             m_vertices = new List<Vertex>();
             m_neighbors = new List<Wedge>(3);
             m_adjacentTriangles = new List<Triangle>(3);
+            //m_collapsedVertices = new List<CollapsedVertex>();
+            m_collapsedVertices = new Dictionary<int, int>();
+            m_displacedVertices = new List<DisplacedVertex>();
+            m_deletedVertices = new List<int>();
         }
-
-        //public Wedge(Wedge other)
-        //{
-        //    m_position = other.m_position;
-        //    m_iID = other.m_iID;
-
-        //    m_vertices = new List<Vertex>(other.m_vertices.Count);
-        //    for (int i = 0; i != other.m_vertices.Count; i++)
-        //    {
-        //        m_vertices.Add(new Vertex(other.m_vertices[i]));
-        //    }
-
-        //    m_neighbors = new List<Wedge>(other.m_neighbors.Count);
-        //    for (int i = 0; i != other.m_neighbors.Count; i++)
-        //    {
-        //        m_neighbors.Add(new Wedge(other.m_neighbors[i]));
-        //    }
-
-        //    m_adjacentTriangles = new List<Triangle>(other.m_adjacentTriangles.Count);
-        //    for (int i = 0; i != other.m_adjacentTriangles.Count; i++)
-        //    {
-        //        m_adjacentTriangles.Add(new Triangle(other.m_adjacentTriangles[i]));
-        //    }
-        //}
 
         public void AddVertex(Vertex vertex)
         {
@@ -118,7 +78,6 @@ namespace PolyReduction
 
         public void RemoveVertex(Vertex vertex)
         {
-            m_vertices.Add(vertex);
             if (HasVertex(vertex))
                 m_vertices.Remove(vertex);
         }
@@ -181,67 +140,113 @@ namespace PolyReduction
         /**
         * Return the triangles shared by two wedges.
         **/
-        //public List<Triangle> GetSharedTrianglesWithWedge(Wedge wedge)
-        //{
-        //    List<Triangle> sharedTriangles = new List<Triangle>();
-
-        //    for (int i = 0; i < m_adjacentTriangles.Count; i++)
-        //    {
-        //        for (int j = 0; j != wedge.m_adjacentTriangles.Count; j++)
-        //        {
-        //            if (m_adjacentTriangles[i] == wedge.m_adjacentTriangles[j])
-        //                sharedTriangles.Add(m_adjacentTriangles[i]);
-        //        }
-        //    }
-
-        //    return sharedTriangles;
-        //}
-
-        public void MapVertices(Wedge v)
+        public List<Triangle> GetSharedTrianglesWithWedge(Wedge wedge)
         {
-            m_mappedVertices = new List<CollapsedVertex>();
+            List<Triangle> sharedTriangles = new List<Triangle>();
 
-            for (int i = 0; i != m_vertices.Count; i++)
+            for (int i = 0; i < m_adjacentTriangles.Count; i++)
             {
-                CollapsedVertex collapsedVertex = new CollapsedVertex();
-                Vertex vertex = m_vertices[i];
-                collapsedVertex.m_initialIndex = vertex.ID;
-
-                Vertex collapseVertex = vertex.FindVertexToCollapseOn(v);
-                if (collapseVertex != null)
+                for (int j = 0; j != wedge.m_adjacentTriangles.Count; j++)
                 {
-                    vertex = collapseVertex;
-                    collapsedVertex.m_collapsedIndex = collapseVertex.ID;
-                    collapsedVertex.m_position = v.m_position;
-                    m_mappedVertices.Add(collapsedVertex);
+                    if (m_adjacentTriangles[i] == wedge.m_adjacentTriangles[j])
+                        sharedTriangles.Add(m_adjacentTriangles[i]);
                 }
+            }
+
+            return sharedTriangles;
+        }
+
+        /**
+        * Collapse all vertices in this wedge using the m_mappedVertices list
+        **/
+        public void CollapseOnWedge(Wedge w)
+        {
+            //w = m_collapse;
+
+            //collapsed vertices
+            Vertex[] collapseVertices = new Vertex[m_collapsedVertices.Count];
+            int collapseVertexIdx = 0;
+            foreach (KeyValuePair<int, int> kvp in m_collapsedVertices)
+            {
+                Vertex vertex = GetVertexForID(kvp.Key);
+
+                Vertex collapseVertex = w.GetVertexForID(kvp.Value);
+                vertex.CollapseOnWedgeVertex(collapseVertex);
+
+                collapseVertices[collapseVertexIdx] = collapseVertex;
+                collapseVertexIdx++;     
+            }
+
+            for (int i = 0; i != collapseVertices.Length; i++)
+            {
+                Vertex collapseVertex = collapseVertices[i];
+
+                //the collapse vertex does not have any adjacent triangles even after collapsing operation, delete it
+                if (collapseVertex.AdjacentTriangles.Count == 0)
+                {
+                    w.RemoveVertex(collapseVertex);
+                    this.m_deletedVertices.Add(collapseVertex.ID);
+                }
+            }
+
+            //for (int i = 0; i != m_collapsedVertices.Count; i++)
+            //{
+            //    Vertex vertex = GetVertexForID(m_collapsedVertices[i].m_initialIndex);
+
+            //    //if (vertex != null) //vertex has been deleted
+            //    Vertex collapseVertex = w.GetVertexForID(m_collapsedVertices[i].m_collapsedIndex);
+            //    vertex.CollapseOnWedgeVertex(collapseVertex);
+
+            //    //the collapse vertex does not have any adjacent triangles even after collapsing operation, delete it
+            //    if (collapseVertex.AdjacentTriangles.Count == 0)
+            //    {
+            //        w.RemoveVertex(collapseVertex);
+            //        this.m_deletedVertices.Add(collapseVertex.ID);
+            //    }
+            //}
+
+            //displaced vertices
+            for (int i = 0; i != m_displacedVertices.Count; i++)
+            {
+                Vertex vertex = GetVertexForID(m_displacedVertices[i].m_index);
+
+                //if (vertex != null)
+                w.AddVertex(vertex);
+                this.RemoveVertex(vertex);
             }
         }
 
         public Vertex MapVertex(Vertex vertex)
         {
-            if (m_mappedVertices == null)
+            if (m_collapsedVertices == null)
                 return null;
 
-            for (int i = 0; i != m_mappedVertices.Count; i++)
-            {
-                if (m_mappedVertices[i].m_initialIndex == vertex.ID)
-                {
-                    if (m_collapse != null)
-                        return m_collapse.GetVertexForID(m_mappedVertices[i].m_collapsedIndex);
-                }
-                    
-            }
+            //collapsed vertices
+            int collapseVertexID;
+            if (m_collapsedVertices.TryGetValue(vertex.ID, out collapseVertexID))
+                return m_collapse.GetVertexForID(collapseVertexID);
 
             return null;
+
+            //for (int i = 0; i != m_collapsedVertices.Count; i++)
+            //{
+            //    if (m_collapsedVertices[i].m_initialIndex == vertex.ID)
+            //    {
+            //        if (m_collapse != null)
+            //            return m_collapse.GetVertexForID(m_collapsedVertices[i].m_collapsedIndex);
+            //    }
+
+            //}
+
+            //return null;
         }
 
         public void Delete()
         {
-            //for each neighbor of this vertex remove it from the neighbors list
-            for (int i = 0; i != m_neighbors.Count; i++)
+            //for each neighbor of this wedge remove it from their neighbors list
+            for (int i = 0; i != Neighbors.Count; i++)
             {
-                m_neighbors[i].RemoveNeighbor(this);
+                Neighbors[i].RemoveNeighbor(this);
             }
         }
     }

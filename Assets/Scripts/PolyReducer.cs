@@ -6,39 +6,11 @@ namespace PolyReduction
     [ExecuteInEditMode]
     public class PolyReducer : MonoBehaviour
     {
-        //inner class to hold initial mesh data
-        private class ModelData
-        {
-            private List<Vector3> m_verts;
-            public List<Vector3> Verts
-            {
-                get
-                {
-                    return m_verts;
-                }
-            }
-
-            private List<int> m_tris;
-            public List<int> Tris
-            {
-                get
-                {
-                    return m_tris;
-                }
-            }
-
-            public ModelData(List<Vector3> verts, List<int> tris)
-            {
-                m_verts = verts;
-                m_tris = tris;
-            }
-        }
-
         private List<Wedge> m_initialWedges;
         private List<Wedge> m_wedges;
         //private List<WedgeTriangle> m_wedgeTriangles;
 
-        private List<int> m_collapseMap; // to which neighbor each wedge collapses
+        private int[] m_collapseMap; // to which neighbor each wedge collapses
 
         private ModelData m_data;
 
@@ -52,9 +24,12 @@ namespace PolyReduction
         public int m_renderedWedgesCount;
         private int m_prevRenderedWedgesCount;
 
+        //the number of wedges able to collapse
+        private int m_minRendereWedgesCount;
+
         public void Start()
         {
-            //PrepareModel();
+            PrepareModel();
         }
 
         /**
@@ -65,10 +40,11 @@ namespace PolyReduction
         {
             //Debug.Log("PrepareModel");
 
-            List<int> permutation;
-            //m_data = GetMeshData();
+            int[] permutation;
+            m_data = GetMeshData();
             //WriteModelDataToFile(100.0f);
-            m_data = GetDummyData();
+            //m_data = GetDummyData();
+            //m_data = MeshTrianglesSeparator.SeparateTrianglesInMesh(m_data);
             ProgressiveMesh(m_data, out m_collapseMap, out permutation);
             PermuteWedges(permutation);
 
@@ -81,51 +57,41 @@ namespace PolyReduction
         /**
         * Core function of the algorithm
         * **/
-        private void ProgressiveMesh(ModelData data, out List<int> map, out List<int> permutation)
+        private void ProgressiveMesh(ModelData data, out int[] map, out int[] permutation)
         {
-            PrepareMeshData(data.Verts, data.Tris);
+            PrepareMeshData(data);
 
             ComputeAllEdgeCollapseCosts();
-            
-            //Debug.Log("1: wedge 243 collapses on " + m_initialWedges[243].m_collapse.ID + "-" + m_initialWedges[243].m_collapse.Vertices[0].ID);
 
-            //for (int w = 0; w != m_wedges.Count; w++)
-            //{
-            //    Debug.Log("wedge cost:" + m_wedges[w].m_cost);
-            //}
-
-            int[] mapArray = new int[m_wedges.Count]; // allocate space
-            int[] permutationArray = new int[m_wedges.Count]; // allocate space
-            map = new List<int>(mapArray);
-            permutation = new List<int>(permutationArray);
-
-
-            //Collapse(m_initialWedges[6], m_initialWedges[7]);
-            //return;
+            //int[] mapArray = new int[m_wedges.Count]; // allocate space
+            //int[] permutationArray = new int[m_wedges.Count]; // allocate space
+            map = new int[m_wedges.Count];
+            permutation = new int[m_wedges.Count];
 
             // reduce the object down to nothing
             while (m_wedges.Count > 0)
             {
                 // get the next vertex to collapse
                 Wedge mn = MinimumCostEdge();
+
+                //if (mn.m_collapse != null)
+                //    Debug.Log("collapsing wedge " + mn.ID + " on wedge " + mn.m_collapse.ID + " with cost " + mn.m_cost);
+
                 // keep track of this vertex, i.e. the collapse ordering
                 permutation[mn.ID] = m_wedges.Count - 1;
                 // keep track of vertex to which we collapse to
-                map[m_wedges.Count - 1] = (mn.m_collapse != null) ? mn.m_collapse.ID : -1;
-                //Map vertices between wedges
-                mn.MapVertices(mn.m_collapse);
-                //copy them to the wedge that will remain alive
-                Wedge persistentWedge = WedgeForID(m_initialWedges, mn.ID);
-                persistentWedge.m_mappedVertices = mn.m_mappedVertices;
+                map[m_wedges.Count - 1] = (mn.m_collapse != null) ? mn.m_collapse.ID : -1;              
                 // Collapse this edge
                 Collapse(mn, mn.m_collapse);
-
-                //if (mn.m_collapse != null)
-                // Debug.Log(mn.ID + " collapsed on:" + mn.m_collapse.ID);
+                //copy mapped, displaced and deleted vertices to the wedge that will remain alive
+                Wedge persistentWedge = WedgeForID(m_initialWedges, mn.ID);
+                persistentWedge.m_collapsedVertices = mn.m_collapsedVertices;
+                persistentWedge.m_displacedVertices = mn.m_displacedVertices;
+                persistentWedge.m_deletedVertices = mn.m_deletedVertices;
             }
 
             // reorder the map list based on the collapse ordering
-            for (int i = 0; i < map.Count; i++)
+            for (int i = 0; i < map.Length; i++)
             {
                 //map[i] = (map[i] == -1) ? 0 : permutation[map[i]];
                 if (map[i] >= 0)
@@ -136,74 +102,69 @@ namespace PolyReduction
         /**
          * Transform the inital mesh data (verts and tris) to one which is more appropriate to our algorithm (with more info in it)
          * **/
-        private void PrepareMeshData(List<Vector3> verts, List<int> tris)
+        private void PrepareMeshData(ModelData data)
         {
             m_wedges = new List<Wedge>();
             m_initialWedges = new List<Wedge>(); //as m_wedges will be consumed, store here a copy of this list
 
-            BuildWedges(m_wedges, verts, tris);
-            BuildWedges(m_initialWedges, verts, tris);
+            BuildWedges(m_wedges, data);
+            BuildWedges(m_initialWedges, data);
         }
 
-        private void BuildWedges(List<Wedge> wedges, List<Vector3> verts, List<int> tris)
+        private void BuildWedges(List<Wedge> wedges, ModelData data)
         {
-            Vertex[] vertices = new Vertex[verts.Count];
+            Vertex[] vertices = new Vertex[data.Verts.Length];
 
             //First sort vertices into wedges
-            for (int i = 0; i != verts.Count; i++)
+            for (int i = 0; i != data.Verts.Length; i++)
             {
-                Vertex vertex = new Vertex(verts[i], i);
+                Vertex vertex = new Vertex(data.Verts[i], i);
+                if (data.Colors != null && data.Colors.Length > 0)
+                    vertex.m_color = data.Colors[i];
+                if (data.UVs != null && data.UVs.Length > 0)
+                    vertex.m_uv = data.UVs[i];
                 vertices[i] = vertex;
 
-                Wedge wedge = WedgeForPosition(wedges, verts[i]);
+                Wedge wedge = WedgeForPosition(wedges, data.Verts[i]);
                 if (wedge != null)
                 {
                     wedge.AddVertex(vertex);
                 }
                 else
                 {
-                    wedge = new Wedge(verts[i], i);
+                    wedge = new Wedge(data.Verts[i], wedges.Count);
                     wedge.AddVertex(vertex);
                     wedges.Add(wedge);
                 }
             }
 
             //Build neighbourly relations between vertices and wedges using the triangles of the model
-            BuildNeighbourlyRelations(wedges, vertices, tris);
+            BuildNeighbourlyRelations(wedges, vertices, data.Tris);
 
             //Determine which triangles are adjacent to each wedge
-            for (int i = 0; i != wedges.Count; i++)
+            for (int i = 0; i != m_wedges.Count; i++)
             {
-                wedges[i].InvalidateAdjacentTriangles();
+                m_wedges[i].InvalidateAdjacentTriangles();
             }
-        }        
+        }
 
         /**
         * Build neighbourly relations between vertices and wedges using the triangles of the model
         **/
-        private void BuildNeighbourlyRelations(List<Wedge> wedges, Vertex[] vertices, List<int> tris)
+        private void BuildNeighbourlyRelations(List<Wedge> wedges, Vertex[] vertices, int[] tris)
         {
-            for (int i = 0; i != tris.Count; i += 3)
+            for (int i = 0; i != tris.Length; i += 3)
             {
                 Vertex v0 = vertices[tris[i]];
                 Vertex v1 = vertices[tris[i + 1]];
                 Vertex v2 = vertices[tris[i + 2]];
 
                 Triangle triangle = new Triangle(v0, v1, v2);
-                //m_triangles.Add(triangle);
 
                 //Set this triangle as an adjacent triangle for every vertex
                 v0.AddAdjacentTriangle(triangle);
                 v1.AddAdjacentTriangle(triangle);
-                v2.AddAdjacentTriangle(triangle);
-
-                //for each triangle vertex, set the 2 opposite points as neighbors
-                //v0.AddNeighbor(v1);
-                //v0.AddNeighbor(v2);
-                //v1.AddNeighbor(v0);
-                //v1.AddNeighbor(v2);
-                //v2.AddNeighbor(v0);
-                //v2.AddNeighbor(v1);                
+                v2.AddAdjacentTriangle(triangle);             
 
                 Wedge w0 = GetWedgeHoldingVertex(wedges, v0);
                 Wedge w1 = GetWedgeHoldingVertex(wedges, v1);
@@ -241,10 +202,11 @@ namespace PolyReduction
             if (m_mesh == null)
                 throw new System.Exception("A mesh has to be added to this object MeshFilter component in order to perform a polygon reduction on it");
 
-            List<Vector3> verts = new List<Vector3>(m_mesh.vertices);
-            List<int> tris = new List<int>(m_mesh.triangles);
+            ModelData meshData = new ModelData(m_mesh.vertices, m_mesh.triangles);
+            meshData.Colors = m_mesh.colors;
+            meshData.UVs = m_mesh.uv;
 
-            return new ModelData(verts, tris);
+            return meshData;
         }
 
         /**
@@ -252,44 +214,106 @@ namespace PolyReduction
         **/
         public void RenderModel()
         {
-            Vector3[] cutVertices;
-            int[] cutTriangles;
-            CutMeshPolygons(out cutVertices, out cutTriangles, m_renderedWedgesCount);
-            RefreshModel(cutVertices, cutTriangles);
+            ModelData cutData;
+
+            if (m_renderedWedgesCount == 3)
+            {
+                System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
+                sw.Start();
+
+                CutMeshPolygons(out cutData, m_renderedWedgesCount, true);
+
+                sw.Stop();
+                Debug.Log("cutting down model to " + m_renderedWedgesCount + " wedges lasts " + sw.ElapsedMilliseconds + " ms"); //20ms to rabbit 3 vertices
+            }
+            else
+                CutMeshPolygons(out cutData, m_renderedWedgesCount);
+
+            RefreshModel(cutData);
         }
 
         /**
         * Return a list of vertices and indices where player has specified a maximum count of vertices for the initial model
         **/
-        public void CutMeshPolygons(out Vector3[] cutVertices, out int[] cutTriangles, int maxWedges)
+        public void CutMeshPolygons(out ModelData cutData, int maxWedges, bool bStopWatch = false)
         {
             //no work to do here
             if (maxWedges >= m_initialWedges.Count)
             {
-                cutVertices = m_data.Verts.ToArray();
-                cutTriangles = m_data.Tris.ToArray();
+                cutData = m_data;
                 return;
             }
 
-            //copy IDs of collapsed vertices into an array and sort it by ascending order
-            List<Wedge.CollapsedVertex> collapsedVertices = MapVertices(maxWedges);
-            int[] collapsedVerticesIDs = new int[collapsedVertices.Count];
-            for (int i = 0; i != collapsedVerticesIDs.Length; i++)
-            {                
-                collapsedVerticesIDs[i] = collapsedVertices[i].m_initialIndex;
+            //list of vertices deleted during the process of collapsing
+            //System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
+            //sw.Start();
+
+            //int counter = 0;
+            //while (counter < 1E04)
+            //{
+            //   FindDeletedVertices(maxWedges);
+            //    counter++;
+            //}
+            //sw.Stop();
+            //Debug.Log("V1 took " + sw.ElapsedMilliseconds + " ms");
+
+            //sw = new System.Diagnostics.Stopwatch();
+            //sw.Start();
+
+            //counter = 0;
+            //while (counter < 1E04)
+            //{
+            //    FindDeletedVertices2(maxWedges);
+            //    counter++;
+            //}
+            //sw.Stop();
+            //Debug.Log("V2 took " + sw.ElapsedMilliseconds + " ms");
+
+            System.Diagnostics.Stopwatch sw = new System.Diagnostics.Stopwatch();
+            if (bStopWatch)
+            {
+                sw = new System.Diagnostics.Stopwatch();
+                sw.Start();
             }
 
-            //Debug.Log(">>>>>>>>CutMeshPolygons " + maxWedges);
-            //for (int i = 0; i != collapsedVertices.Count; i++)
-            //{
-            //    Debug.Log(collapsedVertices[i].ToString());
-            //}
+            //List<int> deletedVertices = FindDeletedVertices(maxWedges);
+            int[] deletedVertices = FindDeletedVertices(maxWedges);
 
-            if (collapsedVerticesIDs.Length > 1)
-                System.Array.Sort(collapsedVerticesIDs);
+            //list of vertices displaced during the process of collapsing
+            List<DisplacedVertex> displacedVertices = FindDisplacedVertices(maxWedges);
+
+            //map vertices that have collapsed
+            List<CollapsedVertex> collapsedVertices = MapVertices(maxWedges);
+
+            //copy IDs of collapsed and deleted vertices into an array and sort it by ascending order
+            int[] dismissedVerticesIDs = new int[collapsedVertices.Count + deletedVertices.Length];
+            for (int i = 0; i != collapsedVertices.Count; i++)
+            {
+                dismissedVerticesIDs[i] = collapsedVertices[i].m_initialIndex;
+            }
+
+            for (int i = collapsedVertices.Count; i != dismissedVerticesIDs.Length; i++)
+            {
+                dismissedVerticesIDs[i] = deletedVertices[i - collapsedVertices.Count];
+            }
+
+            if (dismissedVerticesIDs.Length > 1)
+                System.Array.Sort(dismissedVerticesIDs);
+
+            if (bStopWatch)
+            {
+                sw.Stop();
+                Debug.Log("STEP1 took " + sw.ElapsedMilliseconds + " ms");
+            }
+
+            if (bStopWatch)
+            {
+                sw = new System.Diagnostics.Stopwatch();
+                sw.Start();
+            }
 
             //Traverse wedges (untouched and collapsed ones) and fill in the vertices array by shifting one vertex according to the previous sorted array
-            cutVertices = new Vector3[m_data.Verts.Count];
+            Vertex[] cutVertices = new Vertex[m_data.Verts.Length];
             int maxID = -1;
             for (int i = 0; i != m_initialWedges.Count; i++)
             {
@@ -298,20 +322,39 @@ namespace PolyReduction
                 {
                     Vertex vertex = wedge.Vertices[j];
 
-                    //test if the vertex still exists
+                    //create a copy of this vertex to maintain intact the original one
+                    Vertex copiedVertex = new Vertex();
+                    copiedVertex.m_position = vertex.m_position;
+                    copiedVertex.ID = vertex.ID;
+                    copiedVertex.m_color = vertex.m_color;
+                    copiedVertex.m_uv = vertex.m_uv;
+
+                    //test if the vertex collapsed or has been deleted
                     bool bDismissVertex = false;
-                    for (int p = 0; p != collapsedVerticesIDs.Length; p++)
+                    for (int p = 0; p != dismissedVerticesIDs.Length; p++)
                     {
-                        if (collapsedVerticesIDs[p] == vertex.ID)
+                        if (dismissedVerticesIDs[p] == copiedVertex.ID)
                             bDismissVertex = true;
                     }
 
                     if (!bDismissVertex)
                     {
-                        int id = GetShiftedID(collapsedVerticesIDs, vertex.ID);
+                        //test if it has been displaced and update its position accordingly
+                        for (int p = 0; p != displacedVertices.Count; p++)
+                        {
+                            if (displacedVertices[p].m_index == copiedVertex.ID)
+                            {
+                                copiedVertex.m_position = displacedVertices[p].m_targetPosition;
+                                break;
+                            }
+                        }
+
+                        //compute the new id of this vertex and populate the new vertex array
+                        int id = GetShiftedID(dismissedVerticesIDs, copiedVertex.ID);
                         if (id > maxID)
                             maxID = id;
-                        cutVertices[id] = vertex.m_position;
+                        if (cutVertices[id] == null)
+                            cutVertices[id] = copiedVertex;
                     }
                 }
             }
@@ -319,49 +362,106 @@ namespace PolyReduction
             //use the maximum vertex index to crop the array
             System.Array.Resize(ref cutVertices, maxID + 1);
 
+            if (bStopWatch)
+            {
+                sw.Stop();
+                Debug.Log("STEP2 took " + sw.ElapsedMilliseconds + " ms");
+            }
+
             //now build the triangle list
             List<int> triangles = new List<int>();
-            for (int i = 0; i != m_data.Tris.Count; i += 3)
+            for (int i = 0; i != m_data.Tris.Length; i += 3)
             {
-                int p0 = GetShiftedID(collapsedVerticesIDs, GetCollapseIDForID(collapsedVertices, m_data.Tris[i]));
-                int p1 = GetShiftedID(collapsedVerticesIDs, GetCollapseIDForID(collapsedVertices, m_data.Tris[i + 1]));
-                int p2 = GetShiftedID(collapsedVerticesIDs, GetCollapseIDForID(collapsedVertices, m_data.Tris[i + 2]));
+                int p0 = m_data.Tris[i];
+                int p1 = m_data.Tris[i + 1];
+                int p2 = m_data.Tris[i + 2];
 
-                //one-dimensional (flat) triangle
+                //first check if all triangle vertices still exist
+                bool bDismissTriangle = false;
+                for (int p = 0; p != deletedVertices.Length; p++)
+                {
+                    if (p0 == deletedVertices[p] || p1 == deletedVertices[p] || p2 == deletedVertices[p])
+                    {
+                        bDismissTriangle = true;
+                        break;
+                    }
+                }
+
+                if (bDismissTriangle)
+                    continue;
+
+                //if this triangle is valid, find the correct ID for each vertex
+                p0 = GetShiftedID(dismissedVerticesIDs, GetCollapseIDForID(collapsedVertices, p0));
+                p1 = GetShiftedID(dismissedVerticesIDs, GetCollapseIDForID(collapsedVertices, p1));
+                p2 = GetShiftedID(dismissedVerticesIDs, GetCollapseIDForID(collapsedVertices, p2));
+
+                //one-dimensional (flat) triangle, dismiss it
                 if (p0 == p1 || p1 == p2 || p2 == p0)
                     continue;
+
+                //accumulate triangle normal for each vertex
+                Triangle triangle = new Triangle(cutVertices[p0], cutVertices[p1], cutVertices[p2]);
+                //cutVertices[p0].AccumulateNormalFromTriangle(triangle.m_normal);
+                //cutVertices[p1].AccumulateNormalFromTriangle(triangle.m_normal);
+                //cutVertices[p2].AccumulateNormalFromTriangle(triangle.m_normal);
 
                 triangles.Add(p0);
                 triangles.Add(p1);
                 triangles.Add(p2);
             }
 
-            cutTriangles = triangles.ToArray();
+            //extract data from the Vertex array
+            Vector3[] outputVertices = new Vector3[cutVertices.Length];
+            //Vector3[] outputNormals = new Vector3[cutVertices.Length];
+            Color[] outputColors = (m_data.Colors != null) ? new Color[cutVertices.Length] : null;
+            Vector2[] outputUVs = (m_data.UVs != null) ? new Vector2[cutVertices.Length] : null;
+            for (int i = 0; i != outputVertices.Length; i++)
+            {
+                //vertices
+                outputVertices[i] = cutVertices[i].m_position;
+                //normals
+                //outputNormals[i] = cutVertices[i].GetAccumulationNormal();
+                //colors
+                if (outputColors != null)
+                    outputColors[i] = cutVertices[i].m_color;
+                //uv
+                if (outputUVs != null)
+                    outputUVs[i] = cutVertices[i].m_uv;
+
+            }
+
+            cutData = new ModelData(outputVertices, triangles.ToArray());
+            //cutData.Normals = outputNormals;
+            cutData.Colors = outputColors;
+            cutData.UVs = outputUVs;
         }
 
         /**
         * Map the vertices of all the wedges that have been cut down beyond the maxWedges limit
         **/
-        private List<Wedge.CollapsedVertex> MapVertices(int maxWedges)
+        private List<CollapsedVertex> MapVertices(int maxWedges)
         {
-            List<Wedge.CollapsedVertex> collapsedVertices = new List<Wedge.CollapsedVertex>();
+            List<CollapsedVertex> collapsedVertices = new List<CollapsedVertex>();
 
             for (int i = m_initialWedges.Count - 1; i != maxWedges - 1; i--)
             {
                 Wedge wedge = m_initialWedges[i];
                 List<Vertex> wedgeVerticesCopy = new List<Vertex>(wedge.Vertices);
-
-                Wedge collapseWedge = wedge;
-
+                
                 for (int v = 0; v != wedgeVerticesCopy.Count; v++)
                 {
-                    Wedge.CollapsedVertex collapsedVertex = new Wedge.CollapsedVertex();
+                    Wedge collapseWedge = wedge; //reset the wedge to the actual wedge holding this vertex
+
+                    CollapsedVertex collapsedVertex = new CollapsedVertex(-1, -1);
                     Vertex vertex = wedgeVerticesCopy[v];
                     collapsedVertex.m_initialIndex = vertex.ID;
 
                     int stopIndex = 0;
-                    while (collapseWedge != null && collapseWedge.ID >= maxWedges && stopIndex < 100)
+                    while (collapseWedge.ID >= maxWedges && stopIndex < 100)
                     {
+                        if (collapseWedge.m_collapse == null)
+                            break;
+
                         //Vertex collapseVertex = vertex.FindVertexToCollapseOn(collapseWedge.m_collapse);
                         Vertex collapseVertex = collapseWedge.MapVertex(vertex);
 
@@ -372,32 +472,104 @@ namespace PolyReduction
                         }
 
                         //collapseWedge = collapseWedge.m_collapse;
+                        //int nextWedgeIndex = m_collapseMap[collapseWedge.ID];
+                        //if (nextWedgeIndex >= 0)
+                        //    collapseWedge = m_initialWedges[m_collapseMap[collapseWedge.ID]];
+                        //else
+                        //    break;
+
                         int nextWedgeIndex = m_collapseMap[collapseWedge.ID];
-                        if (nextWedgeIndex >= 0)
-                            collapseWedge = m_initialWedges[m_collapseMap[collapseWedge.ID]];
-                        else
+                        if (nextWedgeIndex == 0)
                             break;
+                        else
+                            collapseWedge = collapseWedge.m_collapse;
 
 
-                        if (collapseWedge != null)
-                        {
-                            //set the vertex position as the position of the last wedge it collapsed to or been moved to
-                            collapsedVertex.m_position = collapseWedge.m_position;
-                        }
+                        //if (collapseWedge != null)
+                        //{
+                        //    //set the vertex position as the position of the last wedge it collapsed to or been moved to
+                        //    collapsedVertex.m_position = collapseWedge.m_position;
+                        //}
 
                         stopIndex++;
                     }
                     if (stopIndex >= 99)
                     Debug.Log("stopIndex:" + stopIndex);
 
-                    collapsedVertices.Add(collapsedVertex);
+                    if (collapsedVertex.m_collapsedIndex >= 0)
+                        collapsedVertices.Add(collapsedVertex);
                 }
             }
 
             return collapsedVertices;
         }
 
+        //private List<int> FindDeletedVertices(int maxWedges)
+        //{
+        //    List<int> deletedVertices = new List<int>();
+        //    for (int i = m_initialWedges.Count - 1; i != maxWedges - 1; i--)
+        //    {
+        //        deletedVertices.AddRange(m_initialWedges[i].m_deletedVertices);
+        //    }
 
+        //    return deletedVertices;
+        //}
+
+        private int[] FindDeletedVertices(int maxWedges)
+        {
+            int deletedVerticesCount = 0;
+            for (int i = m_initialWedges.Count - 1; i != maxWedges - 1; i--)
+            {
+                deletedVerticesCount += m_initialWedges[i].m_deletedVertices.Count;
+            }
+
+            int[] deletedVertices = new int[deletedVerticesCount];
+            int index = 0;
+            for (int i = m_initialWedges.Count - 1; i != maxWedges - 1; i--)
+            {
+                for (int j = 0; j != m_initialWedges[i].m_deletedVertices.Count; j++)
+                {
+                    deletedVertices[index] = m_initialWedges[i].m_deletedVertices[j];
+                    index++;
+                }
+            }
+
+            return deletedVertices;
+        }
+
+        private List<DisplacedVertex> FindDisplacedVertices(int maxWedges)
+        {
+            List<DisplacedVertex> displacedVertices = new List<DisplacedVertex>();
+            for (int i = m_initialWedges.Count - 1; i != maxWedges - 1; i--)
+            {
+                if (displacedVertices.Count == 0) //slight optim when list empty, no need to check if item already exists
+                    displacedVertices.AddRange(m_initialWedges[i].m_displacedVertices);
+                else
+                {
+                    for (int p = 0; p != m_initialWedges[i].m_displacedVertices.Count; p++)
+                    {
+                        DisplacedVertex vertex = m_initialWedges[i].m_displacedVertices[p];
+
+                        //test if the vertex is already in the global list of displaced vertices
+                        bool bVertexAlreadyExists = false;
+                        for (int q = 0; q != displacedVertices.Count; q++)
+                        {
+                            if (displacedVertices[q].m_index == vertex.m_index)
+                            {
+                                bVertexAlreadyExists = true;
+                                displacedVertices[q] = vertex; //update the vertex position
+                                break;
+                            }
+                        }
+
+                        if (!bVertexAlreadyExists)
+                            displacedVertices.Add(vertex);
+                    }
+                }
+            }
+
+            return displacedVertices;
+        }
 
         /**
         * Shift the parameter 'id' according to the array of 'vertices' that collapsed
@@ -408,10 +580,7 @@ namespace PolyReduction
             for (int i = 0; i != vertices.Length; i++)
             {
                 if (id > vertices[i])
-                {
-                    shift = i + 1;
-                    break;
-                }
+                    shift++;
             }
             return id - shift;
         }
@@ -419,7 +588,7 @@ namespace PolyReduction
         /**
         * Return the ID of the vertex on which the vertex of ID 'id' collapses
         **/
-        private int GetCollapseIDForID(List<Wedge.CollapsedVertex> vertices, int id)
+        private int GetCollapseIDForID(List<CollapsedVertex> vertices, int id)
         {
             for (int i = 0; i != vertices.Count; i++)
             {
@@ -463,9 +632,9 @@ namespace PolyReduction
         /**
         * Reorder the wedges according to the permutation array
         **/
-        private void PermuteWedges(List<int> permutation)
+        private void PermuteWedges(int[] permutation)
         {
-            if (permutation.Count != m_initialWedges.Count)
+            if (permutation.Length != m_initialWedges.Count)
                 throw new System.Exception("permutation list and initial wedges are not of the same size");
 
             // rearrange the wedge array 
@@ -495,6 +664,19 @@ namespace PolyReduction
                 m_initialWedges[permutation[i]].ID = permutation[i];
                 //m_initialWedges[i].ID = i;                
             }
+            
+            int index = 0;
+            for (int i = 0; i != m_collapseMap.Length; i++)
+            {
+                if (m_collapseMap[i] == -1)
+                    index++;
+                else
+                    break;
+            }
+
+            m_minRendereWedgesCount = Mathf.Max(index, 3); //stop the collapsing process at the last vertex we can actually collapse or 3 to render at least one triangle
+
+            Debug.Log(index + " vertices cannot collapse");
         }
 
         /**
@@ -517,18 +699,20 @@ namespace PolyReduction
             float edgelength = (v.m_position - u.m_position).magnitude;
             float curvature = 0;
 
+            //// find the "sides" triangles that are on the edge uv
+            //List<Triangle> sides = new List<Triangle>();
+            //for (i = 0; i < u.AdjacentTriangles.Count; i++)
+            //{
+            //    Triangle triangle = u.AdjacentTriangles[i];
+            //    if (v.HasAdjacentTriangle(triangle)) //triangle is both adjacent to wedge u and v, so adjacent to edge [u-v]
+            //        sides.Add(u.AdjacentTriangles[i]);
+            //}
+
             // find the "sides" triangles that are on the edge uv
-            List<Triangle> sides = new List<Triangle>();
-            for (i = 0; i < u.AdjacentTriangles.Count; i++)
-            {
-                Triangle triangle = u.AdjacentTriangles[i];
-                if (v.HasAdjacentTriangle(triangle)) //triangle is both adjacent to wedge u and v, so adjacent to edge [u-v]
-                    sides.Add(u.AdjacentTriangles[i]);
-                //if (u.AdjacentTriangles[i].HasVertex(v))
-                //{
-                //    sides.Add(u.AdjacentTriangles[i]);
-                //}
-            }
+            List<Triangle> sides = u.GetSharedTrianglesWithWedge(v);
+
+            if (sides.Count < 2) //wedge u cannot be collapsed on v because this edge is non manifold (i.e does not have 2 adjacent triangle)
+                return -1; //return a negative/invalid cost
 
             // use the triangle facing most away from the sides 
             // to determine our curvature term
@@ -564,7 +748,7 @@ namespace PolyReduction
             {
                 // v doesn't have neighbors so it costs nothing to collapse
                 w.m_collapse = null;
-                w.m_cost = -0.01f;
+                w.m_cost = 0;
                 return;
             }
             w.m_cost = 1000000;
@@ -574,10 +758,18 @@ namespace PolyReduction
             {
                 float dist;
                 dist = ComputeEdgeCollapseCost(w, w.Neighbors[i]);
-                if (dist < w.m_cost)
+                if (dist < 0) //non-manifold edge
                 {
-                    w.m_collapse = w.Neighbors[i];  // candidate for edge collapse
-                    w.m_cost = dist;             // cost of the collapse
+                    w.m_collapse = null;
+                    w.m_cost = 0;
+                }
+                else
+                {
+                    if (dist < w.m_cost)
+                    {
+                        w.m_collapse = w.Neighbors[i];  // candidate for edge collapse
+                        w.m_cost = dist;             // cost of the collapse
+                    }
                 }
             }
         }
@@ -597,18 +789,6 @@ namespace PolyReduction
         }
 
         /**
-        * Copy collaspe values to m_initialWedges list
-        **/
-        //private void CopyCollapseValues()
-        //{
-        //    for (int i = 0; i != m_initialWedges.Count; i++)
-        //    {
-        //        m_initialWedges[i].m_collapse = WedgeForID(m_initialWedges, m_wedges[i].m_collapse.ID);
-        //        m_initialWedges[i].m_cost = m_wedges[i].m_cost;
-        //    }
-        //}
-
-        /**
         * Collapse the wedge u onto the wedge v
         * **/
         private void Collapse(Wedge u, Wedge v)
@@ -624,35 +804,56 @@ namespace PolyReduction
                 return;
             }
 
-            //List<Wedge> tmp = new List<Wedge>(u.Neighbors.Count);
-            //// make tmp a list of all the neighbors of u
-            //for (int i = 0; i < u.Neighbors.Count; i++)
-            //{
-            //    tmp.Add(u.Neighbors[i]);
-            //}
-
-            // mark triangles on edge [u-v] for deletion
-            List<Triangle> trianglesToDelete = new List<Triangle>();
+            //Find vertices that will collapse or be displaced
             for (int i = 0; i != u.Vertices.Count; i++)
             {
-                for (int j = 0; j != v.Vertices.Count; j++)
+                Vertex vertex = u.Vertices[i];
+                Vertex collapseVertex = vertex.FindVertexToCollapseOn(v); //the vertex it will collapse on if it exists
+
+                if (collapseVertex != null)
                 {
-                    List<Triangle> sharedTriangles = u.Vertices[i].GetSharedTriangles(v.Vertices[j]);
-                    trianglesToDelete.AddRange(sharedTriangles);
+                    u.m_collapsedVertices.Add(vertex.ID, collapseVertex.ID); //no exception will be thrown as unique IDs are inserted into that dictionary
+
+                    //CollapsedVertex collapsedVertex = new CollapsedVertex(vertex.ID, collapseVertex.ID);
+
+                    //u.m_collapsedVertices.Add(collapsedVertex);
+                }
+                else
+                {
+                    DisplacedVertex displacedVertex = new DisplacedVertex();
+                    displacedVertex.m_index = vertex.ID;
+                    displacedVertex.m_targetPosition = v.m_position;
+
+                    u.m_displacedVertices.Add(displacedVertex);
                 }
             }
 
-            // collapse vertices
-            for (int i = 0; i != u.Vertices.Count; i++)
+            //delete triangles on edge[u - v]
+            List<Triangle> sharedTriangles = u.GetSharedTrianglesWithWedge(v);
+            for (int i = 0; i != sharedTriangles.Count; i++)
             {
-                u.Vertices[i].CollapseOnWedge(v);                
+                //delete the triangle
+                sharedTriangles[i].Delete();
+
+                for (int j = 0; j != sharedTriangles[i].Vertices.Length; j++)
+                {
+                    Vertex vertex = sharedTriangles[i].Vertices[j];
+
+                    if (!u.HasVertex(vertex) && !v.HasVertex(vertex)) //the third wedge that is not u or v holds this vertex
+                    {
+                        if (vertex.AdjacentTriangles.Count == 0) //vertex is isolated, remove it
+                        {
+                            //find the wedge and remove the vertex from its internal list
+                            GetWedgeHoldingVertex(m_wedges, vertex).RemoveVertex(vertex);
+                            //add the vertex ID to the list of vertices deleted during the operation of collapsing u onto v
+                            u.m_deletedVertices.Add(vertex.ID);
+                        }
+                    }
+                }
             }
 
-            //delete triangles marked previously
-            for (int i = 0; i != trianglesToDelete.Count; i++)
-            {
-                trianglesToDelete[i].Delete();
-            }
+            //perform the actual collapse
+            u.CollapseOnWedge(v);           
 
             //add u neighbors to v and add v as a new neighbor of u neighbors
             for (int i = 0; i != u.Neighbors.Count; i++)
@@ -669,8 +870,8 @@ namespace PolyReduction
             {
                 u.Neighbors[i].InvalidateAdjacentTriangles();
             }
-            //v.InvalidateAdjacentTriangles();
-
+            
+            //delete the wedge and remove it from global list
             u.Delete();
             m_wedges.Remove(u);
 
@@ -692,14 +893,26 @@ namespace PolyReduction
             // Serious optimization opportunity here: this function currently
             // does a sequential search through an unsorted list :-(
             // Our algorithm could be O(n*lg(n)) instead of O(n*n)
-            Wedge mn = m_wedges[0];
+            Wedge mn = null;
+            float minCost = float.MaxValue;
             for (int i = 0; i < m_wedges.Count; i++)
             {
-                if (m_wedges[i].m_cost < mn.m_cost)
+                if (m_wedges[i].m_collapse == null)
+                    continue;
+
+                if (m_wedges[i].m_cost == 0) //zero cost, take the first wedge we encounter
+                    return m_wedges[i];
+
+                if (m_wedges[i].m_cost < minCost)
                 {
                     mn = m_wedges[i];
+                    minCost = m_wedges[i].m_cost;
                 }
             }
+
+            if (mn == null) //we spent all wedges that collapse, only wedges with null collapse remain so return the first one
+                mn = m_wedges[0];
+
             return mn;
         }
 
@@ -756,7 +969,7 @@ namespace PolyReduction
             //                            { 6, 0, 2}
             //                         };
 
-        List<Vector3> verts = new List<Vector3>(dummyVertices.GetLength(0));
+            List<Vector3> verts = new List<Vector3>(dummyVertices.GetLength(0));
             for (int i = 0; i != dummyVertices.GetLength(0); i++)
             {
                 float x = dummyVertices[i, 0];
@@ -779,21 +992,34 @@ namespace PolyReduction
             m_mesh.vertices = verts.ToArray();
             m_mesh.triangles = tris.ToArray();
 
-            ModelData dummyData = new ModelData(verts, tris);
+            ModelData dummyData = new ModelData(verts.ToArray(), tris.ToArray());
             return dummyData;
         }
 
         /**
         * Reassign vertices and triangles to the model
         **/
-        private void RefreshModel(Vector3[] vertices, int[] triangles)
+        private void RefreshModel(ModelData data)
         {
-            m_mesh = new Mesh();
-            this.GetComponent<MeshFilter>().sharedMesh = m_mesh;
+            if (GetComponent<MeshFilter>().sharedMesh == null)
+            {
+                m_mesh = new Mesh();
+                GetComponent<MeshFilter>().sharedMesh = m_mesh;
+            }
+            else
+                m_mesh.Clear();
+
+            //m_mesh = new Mesh();
+            //this.GetComponent<MeshFilter>().sharedMesh = m_mesh;
             //m_mesh.Clear();
 
-            m_mesh.vertices = vertices;
-            m_mesh.triangles = triangles;
+            m_mesh.vertices = data.Verts;
+            m_mesh.triangles = data.Tris;
+            m_mesh.colors = data.Colors;
+            m_mesh.uv = data.UVs;
+
+            m_mesh.RecalculateBounds();
+            m_mesh.RecalculateNormals();
         }
 
 
@@ -801,8 +1027,8 @@ namespace PolyReduction
         {
             if (m_data != null)
             {
-                if (m_renderedWedgesCount < 0)
-                    m_renderedWedgesCount = 0;
+                if (m_renderedWedgesCount < m_minRendereWedgesCount)
+                    m_renderedWedgesCount = m_minRendereWedgesCount;
                 if (m_renderedWedgesCount > m_initialWedges.Count)
                     m_renderedWedgesCount = m_initialWedges.Count;
 
@@ -830,12 +1056,12 @@ namespace PolyReduction
             //vertices
             strData += "\t\tpublic static float[,] plane_vertices =\n";
             strData += "\t\t{\n";
-            for (int i = 0; i != m_data.Verts.Count; i++)
+            for (int i = 0; i != m_data.Verts.Length; i++)
             {
                 Vector3 vertex = m_data.Verts[i];
                 string strVertex = "\t\t\t{" + (vertex.x * scale) + "f," + (vertex.y * scale) + "f," + (vertex.z * scale) + "f}";
                 strData += strVertex;
-                if (i < m_data.Verts.Count - 1)
+                if (i < m_data.Verts.Length - 1)
                     strData += ",";
                 strData += "\n";
             }
@@ -845,11 +1071,11 @@ namespace PolyReduction
             //triangles
             strData += "\t\tpublic static int[,] plane_triangles =\n";
             strData += "\t\t{\n";
-            for (int i = 0; i != m_data.Tris.Count; i += 3)
+            for (int i = 0; i != m_data.Tris.Length; i += 3)
             {
                 string strTri = "\t\t\t{" + m_data.Tris[i] + "," + m_data.Tris[i + 1] + "," + m_data.Tris[i + 2] + "}";
                 strData += strTri;
-                if (i < m_data.Tris.Count - 1)
+                if (i < m_data.Tris.Length - 1)
                     strData += ",";
                 strData += "\n";
             }

@@ -4,7 +4,15 @@ namespace PolyReduction
 {
     public class Triangle
     {
-        private Vertex[] m_vertices;// the 3 points that make this tri
+        private Vertex[] m_vertices; // the 3 points that make this tri
+        public Vertex[] Vertices
+        {
+            get
+            {
+                return m_vertices;
+            }
+        }
+
         public Vector3 m_normal { get; set; } // orthogonal unit vector
 
         public Triangle(Vertex v0, Vertex v1, Vertex v2)
@@ -87,8 +95,9 @@ namespace PolyReduction
         {
             for (int i = 0; i < 3; i++)
             {
-                if (m_vertices[i] != null)
-                    m_vertices[i].RemoveAdjacentTriangle(this);
+                Vertex vertex = m_vertices[i];
+                if (vertex != null)
+                    vertex.RemoveAdjacentTriangle(this);
             }
 
             //for (int i = 0; i < 3; i++)
